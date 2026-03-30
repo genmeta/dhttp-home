@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 dirs = "6"
 futures = "0.3"
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 snafu = "0.9"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
