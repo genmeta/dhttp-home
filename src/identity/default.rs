@@ -1,18 +1,13 @@
-use std::{
-    fmt::Display,
-    ops::ControlFlow,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
+#[cfg(feature = "ssl")]
+use std::{fmt::Display, ops::ControlFlow};
 
 use serde::{Deserialize, Serialize};
-use snafu::{OptionExt, ResultExt, Snafu};
+use snafu::{ResultExt, Snafu};
 use tokio::fs;
 use toml::Spanned;
 
-use crate::{
-    GenmetaHome,
-    identity::{self, IdentityHome, Name},
-};
+use crate::{GenmetaHome, identity::Name};
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct DefaultConfig {
@@ -40,16 +35,19 @@ impl DefaultConfig {
 #[derive(Debug)]
 pub struct DefaultConfigFile {
     path: PathBuf,
+    #[allow(dead_code)]
     content: Option<String>,
     config: DefaultConfig,
 }
 
+#[cfg(feature = "ssl")]
 #[derive(Debug, Clone, Copy)]
-struct LineCol {
+pub(crate) struct LineCol {
     line: usize,
     column: usize,
 }
 
+#[cfg(feature = "ssl")]
 impl LineCol {
     fn locate(source: &str, offset: usize) -> LineCol {
         let fold = |last: LineCol, (index, char)| {
@@ -75,32 +73,25 @@ impl LineCol {
     }
 }
 
+#[cfg(feature = "ssl")]
 impl Display for LineCol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}", self.line, self.column)
     }
 }
 
+#[cfg(feature = "ssl")]
 #[derive(Debug)]
-struct FileLineCol {
+pub(crate) struct FileLineCol {
     path: PathBuf,
     line_col: LineCol,
 }
 
+#[cfg(feature = "ssl")]
 impl Display for FileLineCol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}", self.path.display(), self.line_col)
     }
-}
-
-#[derive(Snafu, Debug)]
-#[snafu(module, display(
-    "failed to load identity specified{}",
-    config.as_ref().map_or(String::new(), |loc| format!(" at {loc}"))
-))]
-pub struct LoadIdentityError {
-    config: Option<FileLineCol>,
-    source: identity::fs::LoadIdentityError,
 }
 
 #[derive(Snafu, Debug)]
@@ -157,12 +148,6 @@ impl DefaultConfigFile {
         })
     }
 
-    fn locate(&self, offset: usize) -> Option<FileLineCol> {
-        let line_col = LineCol::locate(self.content.as_ref()?, offset);
-        let path = self.path.clone();
-        Some(FileLineCol { path, line_col })
-    }
-
     pub fn config(&self) -> &DefaultConfig {
         &self.config
     }
@@ -171,20 +156,11 @@ impl DefaultConfigFile {
         &mut self.config
     }
 
-    pub async fn load_default_identity(
-        &self,
-        genmeta_home: &GenmetaHome,
-    ) -> Option<Result<IdentityHome, LoadIdentityError>> {
-        let name = self.config.name.as_ref()?;
-
-        Some(
-            genmeta_home
-                .load_identity(name.as_ref().borrow())
-                .await
-                .context(load_identity_error::LoadIdentitySnafu {
-                    config: self.locate(name.span().start),
-                }),
-        )
+    #[cfg(feature = "ssl")]
+    pub(crate) fn locate(&self, offset: usize) -> Option<FileLineCol> {
+        let line_col = LineCol::locate(self.content.as_ref()?, offset);
+        let path = self.path.clone();
+        Some(FileLineCol { path, line_col })
     }
 
     pub async fn save(&self) -> Result<(), SaveDefaultConfigError> {
@@ -197,17 +173,6 @@ impl DefaultConfigFile {
     }
 }
 
-#[derive(Debug, Snafu)]
-#[snafu(module)]
-pub enum LoadDefaultIdentityError {
-    #[snafu(transparent)]
-    LoadDefaultConfig { source: LoadDefaultConfigError },
-    #[snafu(display("no default identity configured"))]
-    NoDefaultIdentity,
-    #[snafu(transparent)]
-    LoadIdentity { source: LoadIdentityError },
-}
-
 impl GenmetaHome {
     pub fn identity_default_config_path(&self) -> PathBuf {
         self.join(DefaultConfig::FILE_NAME)
@@ -217,15 +182,6 @@ impl GenmetaHome {
         &self,
     ) -> Result<DefaultConfigFile, LoadDefaultConfigError> {
         DefaultConfigFile::load(self.identity_default_config_path()).await
-    }
-
-    pub async fn load_default_identity(&self) -> Result<IdentityHome, LoadDefaultIdentityError> {
-        Ok(self
-            .load_identity_default_config()
-            .await?
-            .load_default_identity(self)
-            .await
-            .context(load_default_identity_error::NoDefaultIdentitySnafu)??)
     }
 
     pub fn new_identity_default_config(&self) -> DefaultConfigFile {

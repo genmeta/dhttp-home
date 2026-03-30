@@ -5,13 +5,14 @@ use std::{
     str::FromStr,
 };
 
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use snafu::Snafu;
 
 use crate::GenmetaHome;
 
+#[cfg(feature = "default-config")]
 pub mod default;
-pub mod fs;
+#[cfg(feature = "ssl")]
+pub mod ssl;
 
 /// Name of an identity, always ends with `.genmeta.net`
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -75,7 +76,7 @@ pub enum InvalidName {
     TooLong {},
     #[snafu(display("label too long (max {} characters)", Name::MAX_LABEL_LENGTH))]
     LabelTooLong {},
-    #[snafu(display("name contains empty or numberic / hyphen only label"))]
+    #[snafu(display("name contains empty or numeric / hyphen only label"))]
     EmptyLabel {},
     #[snafu(display("name contains invalid characters"))]
     InvalidCharacter {},
@@ -247,17 +248,7 @@ pub struct IdentityHome {
     pub(crate) name: Name<'static>,
 }
 
-/// Loaded TLS material (certificates + private key) for an identity.
-#[derive(Debug)]
-pub struct Identity {
-    pub(crate) name: Name<'static>,
-    pub(crate) certs: Vec<CertificateDer<'static>>,
-    pub(crate) key: PrivateKeyDer<'static>,
-}
-
 impl IdentityHome {
-    pub const SSL_DIR_NAME: &'static str = "ssl";
-
     pub fn name(&self) -> &Name<'static> {
         &self.name
     }
@@ -266,27 +257,20 @@ impl IdentityHome {
         self.path.as_path()
     }
 
-    pub fn ssl_path(&self) -> PathBuf {
-        self.path.join(Self::SSL_DIR_NAME)
-    }
-}
-
-impl Identity {
-    pub fn name(&self) -> &Name<'static> {
-        &self.name
-    }
-
-    pub fn certs(&self) -> &[CertificateDer<'static>] {
-        &self.certs
-    }
-
-    pub fn key(&self) -> &PrivateKeyDer<'static> {
-        &self.key
+    pub fn join(&self, sub: impl AsRef<Path>) -> PathBuf {
+        self.path.join(sub)
     }
 }
 
 impl GenmetaHome {
     pub fn join_identity_name(&self, name: Name<'_>) -> PathBuf {
         self.join(name.as_partial())
+    }
+
+    pub fn identity_home(&self, name: Name<'_>) -> IdentityHome {
+        IdentityHome {
+            path: self.join_identity_name(name.borrow()),
+            name: name.to_owned(),
+        }
     }
 }

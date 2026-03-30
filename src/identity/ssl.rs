@@ -14,8 +14,42 @@ use x509_parser::prelude::Pem;
 
 use crate::{
     GenmetaHome,
-    identity::{Identity, IdentityHome, Name},
+    identity::{IdentityHome, Name},
 };
+
+pub const SSL_DIR_NAME: &str = "ssl";
+pub const CERT_FILE_NAME: &str = "fullchain.crt";
+pub const KEY_FILE_NAME: &str = "privkey.pem";
+
+/// Loaded TLS material (certificates + private key) for an identity.
+#[derive(Debug)]
+pub struct Identity {
+    name: Name<'static>,
+    certs: Vec<CertificateDer<'static>>,
+    key: PrivateKeyDer<'static>,
+}
+
+impl Identity {
+    pub fn new(
+        name: Name<'static>,
+        certs: Vec<CertificateDer<'static>>,
+        key: PrivateKeyDer<'static>,
+    ) -> Self {
+        Self { name, certs, key }
+    }
+
+    pub fn name(&self) -> &Name<'static> {
+        &self.name
+    }
+
+    pub fn certs(&self) -> &[CertificateDer<'static>] {
+        &self.certs
+    }
+
+    pub fn key(&self) -> &PrivateKeyDer<'static> {
+        &self.key
+    }
+}
 
 #[derive(Snafu, Debug)]
 #[snafu(module)]
@@ -44,7 +78,7 @@ pub enum LoadKeyError {
     #[snafu(transparent)]
     Io { source: io::Error },
     #[snafu(display(
-        "Private key file permissions are too open (current {current:o}, expected to be 400)"
+        "private key file permissions are too open (current {current:o}, expected to be 400)"
     ))]
     PermissionsTooOpen { current: u32 },
     #[snafu(display("failed to parse certificate"))]
@@ -91,13 +125,12 @@ pub enum ListIdentitiesError {
 }
 
 impl IdentityHome {
-    pub(crate) const CERT_FILE_NAME: &'static str = "fullchain.crt";
-    pub(crate) const KEY_FILE_NAME: &'static str = "privkey.pem";
-}
+    pub fn ssl_dir(&self) -> PathBuf {
+        self.join(SSL_DIR_NAME)
+    }
 
-impl IdentityHome {
     pub async fn certs(&self) -> Result<Vec<CertificateDer<'static>>, LoadCertError> {
-        let certs_path = self.ssl_path().join(IdentityHome::CERT_FILE_NAME);
+        let certs_path = self.ssl_dir().join(CERT_FILE_NAME);
         let mut data = std::io::Cursor::new(fs::read(certs_path.as_path()).await?);
         let (end_entity_pem, _read) = Pem::read(&mut data).context(load_cert_error::PemSnafu)?;
         let mut certs = vec![CertificateDer::from(end_entity_pem.contents)];
@@ -115,7 +148,7 @@ impl IdentityHome {
     }
 
     pub async fn key(&self) -> Result<PrivateKeyDer<'static>, LoadKeyError> {
-        let key_path = self.ssl_path().join(IdentityHome::KEY_FILE_NAME);
+        let key_path = self.ssl_dir().join(KEY_FILE_NAME);
         let metadata = fs::metadata(key_path.as_path()).await?;
         #[cfg(unix)]
         {
@@ -135,24 +168,70 @@ impl IdentityHome {
         rustls::pki_types::pem::PemObject::from_pem_slice(&data).context(load_key_error::ParseSnafu)
     }
 
-    pub async fn ssl(&self) -> Result<Identity, LoadIdentitySslError> {
-        let certs_path = self.ssl_path().join(IdentityHome::CERT_FILE_NAME);
+    pub async fn identity(&self) -> Result<Identity, LoadIdentitySslError> {
+        let certs_path = self.ssl_dir().join(CERT_FILE_NAME);
         let certs = self
             .certs()
             .await
             .context(load_identity_ssl_error::LoadCertsSnafu { path: certs_path })?;
 
-        let key_path = self.ssl_path().join(IdentityHome::KEY_FILE_NAME);
+        let key_path = self.ssl_dir().join(KEY_FILE_NAME);
         let key = self
             .key()
             .await
             .context(load_identity_ssl_error::LoadKeySnafu { path: key_path })?;
 
-        Ok(Identity {
-            name: self.name.clone(),
-            certs,
-            key,
-        })
+        Ok(Identity::new(self.name.clone(), certs, key))
+    }
+
+    pub async fn save_identity(
+        &self,
+        cert: &[u8],
+        key: &[u8],
+    ) -> Result<(), SaveIdentityError> {
+        let ssl_dir = self.ssl_dir();
+        fs::create_dir_all(ssl_dir.as_path()).await.context(
+            save_identity_error::CreateIdentityDirSnafu {
+                path: ssl_dir.clone(),
+            },
+        )?;
+
+        let mut open_options = fs::OpenOptions::new();
+        open_options.create_new(true).write(true);
+        #[cfg(unix)]
+        open_options.mode(0o400);
+
+        // remove old cert file if any, then write new one
+        let path = ssl_dir.join(CERT_FILE_NAME);
+        if let Err(error) = fs::remove_file(path.as_path()).await
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            return Err(save_identity_error::DeleteSnafu { path }.into_error(error));
+        }
+        open_options
+            .open(path.as_path())
+            .await
+            .context(save_identity_error::CreateSnafu { path: path.clone() })?
+            .write_all(cert)
+            .await
+            .context(save_identity_error::WriteSnafu { path: path.clone() })?;
+
+        // remove old key file if any, then write new one
+        let path = ssl_dir.join(KEY_FILE_NAME);
+        if let Err(error) = fs::remove_file(path.as_path()).await
+            && error.kind() != io::ErrorKind::NotFound
+        {
+            return Err(save_identity_error::DeleteSnafu { path }.into_error(error));
+        }
+        open_options
+            .open(path.as_path())
+            .await
+            .context(save_identity_error::CreateSnafu { path: path.clone() })?
+            .write_all(key)
+            .await
+            .context(save_identity_error::WriteSnafu { path: path.clone() })?;
+
+        Ok(())
     }
 }
 
@@ -204,9 +283,7 @@ impl GenmetaHome {
                         })?
                         .is_dir()
                     && let Ok(name) = Name::try_from_str_partial(name.to_string_lossy())
-                    && fs::metadata(entry_path.join(IdentityHome::SSL_DIR_NAME))
-                        .await
-                        .is_ok()
+                    && fs::metadata(entry_path.join(SSL_DIR_NAME)).await.is_ok()
                 {
                     return Ok(Some(name));
                 }
@@ -280,63 +357,79 @@ impl GenmetaHome {
             name: name.to_owned(),
         })
     }
+}
 
-    pub async fn save_identity(
-        &self,
-        name: Name<'_>,
-        cert: &[u8],
-        key: &[u8],
-    ) -> Result<(), SaveIdentityError> {
-        // create identity dir and ssl subdir
-        let identity_dir = self.join_identity_name(name);
-        let ssl_dir = identity_dir.join(IdentityHome::SSL_DIR_NAME);
-        fs::create_dir_all(ssl_dir.as_path()).await.context(
-            save_identity_error::CreateIdentityDirSnafu {
-                path: ssl_dir.clone(),
-            },
-        )?;
+// --- Intersection: ssl + default-config ---
 
-        // prepare open options for create then write files
-        let mut open_options = fs::OpenOptions::new();
-        open_options.create_new(true).write(true);
-        #[cfg(unix)]
-        // TODO: test 400 permission
-        open_options.mode(0o400);
+#[cfg(feature = "default-config")]
+mod default_config_integration {
+    use snafu::{OptionExt, ResultExt, Snafu};
 
-        // remove old file if any
-        let path = ssl_dir.join(IdentityHome::CERT_FILE_NAME);
-        if let Err(error) = fs::remove_file(path.as_path()).await
-            && error.kind() != io::ErrorKind::NotFound
-        {
-            return Err(save_identity_error::DeleteSnafu { path }.into_error(error));
+    use super::LoadIdentityError;
+    use crate::{
+        GenmetaHome,
+        identity::{
+            IdentityHome,
+            default::{DefaultConfigFile, FileLineCol, LoadDefaultConfigError},
+        },
+    };
+
+    #[derive(Snafu, Debug)]
+    #[snafu(module, display(
+        "failed to load identity specified{}",
+        config.as_ref().map_or(String::new(), |loc| format!(" at {loc}"))
+    ))]
+    pub struct LoadDefaultIdentityFromConfigError {
+        config: Option<FileLineCol>,
+        source: LoadIdentityError,
+    }
+
+    #[derive(Debug, Snafu)]
+    #[snafu(module)]
+    pub enum LoadDefaultIdentityError {
+        #[snafu(transparent)]
+        LoadDefaultConfig { source: LoadDefaultConfigError },
+        #[snafu(display("no default identity configured"))]
+        NoDefaultIdentity,
+        #[snafu(transparent)]
+        LoadIdentity {
+            source: LoadDefaultIdentityFromConfigError,
+        },
+    }
+
+    impl DefaultConfigFile {
+        pub async fn load_default_identity(
+            &self,
+            genmeta_home: &GenmetaHome,
+        ) -> Option<Result<IdentityHome, LoadDefaultIdentityFromConfigError>> {
+            let name = self.config().name.as_ref()?;
+
+            Some(
+                genmeta_home
+                    .load_identity(name.as_ref().borrow())
+                    .await
+                    .context(
+                    load_default_identity_from_config_error::LoadDefaultIdentityFromConfigSnafu {
+                        config: self.locate(name.span().start),
+                    },
+                ),
+            )
         }
+    }
 
-        // create then write new cert file
-        open_options
-            .open(path.as_path())
-            .await
-            .context(save_identity_error::CreateSnafu { path: path.clone() })?
-            .write_all(cert)
-            .await
-            .context(save_identity_error::WriteSnafu { path: path.clone() })?;
-
-        // remove old file if any
-        let path = ssl_dir.join(IdentityHome::KEY_FILE_NAME);
-        if let Err(error) = fs::remove_file(path.as_path()).await
-            && error.kind() != io::ErrorKind::NotFound
-        {
-            return Err(save_identity_error::DeleteSnafu { path }.into_error(error));
+    impl GenmetaHome {
+        pub async fn load_default_identity(
+            &self,
+        ) -> Result<IdentityHome, LoadDefaultIdentityError> {
+            Ok(self
+                .load_identity_default_config()
+                .await?
+                .load_default_identity(self)
+                .await
+                .context(load_default_identity_error::NoDefaultIdentitySnafu)??)
         }
-
-        // create then write new key file
-        open_options
-            .open(path.as_path())
-            .await
-            .context(save_identity_error::CreateSnafu { path: path.clone() })?
-            .write_all(key)
-            .await
-            .context(save_identity_error::WriteSnafu { path: path.clone() })?;
-
-        Ok(())
     }
 }
+
+#[cfg(feature = "default-config")]
+pub use default_config_integration::*;
