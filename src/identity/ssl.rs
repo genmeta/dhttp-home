@@ -184,11 +184,7 @@ impl IdentityHome {
         Ok(Identity::new(self.name.clone(), certs, key))
     }
 
-    pub async fn save_identity(
-        &self,
-        cert: &[u8],
-        key: &[u8],
-    ) -> Result<(), SaveIdentityError> {
+    pub async fn save_identity(&self, cert: &[u8], key: &[u8]) -> Result<(), SaveIdentityError> {
         let ssl_dir = self.ssl_dir();
         fs::create_dir_all(ssl_dir.as_path()).await.context(
             save_identity_error::CreateIdentityDirSnafu {
