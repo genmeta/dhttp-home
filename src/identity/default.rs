@@ -7,7 +7,7 @@ use snafu::{ResultExt, Snafu};
 use tokio::fs;
 use toml::Spanned;
 
-use crate::{GenmetaHome, identity::Name};
+use crate::{DhttpHome, identity::Name};
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct DefaultConfig {
@@ -173,7 +173,7 @@ impl DefaultConfigFile {
     }
 }
 
-impl GenmetaHome {
+impl DhttpHome {
     pub fn identity_default_config_path(&self) -> PathBuf {
         self.join(DefaultConfig::FILE_NAME)
     }

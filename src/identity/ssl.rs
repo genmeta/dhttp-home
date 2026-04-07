@@ -13,7 +13,7 @@ use tokio::{
 use x509_parser::prelude::Pem;
 
 use crate::{
-    GenmetaHome,
+    DhttpHome,
     identity::{IdentityHome, Name},
 };
 
@@ -231,7 +231,7 @@ impl IdentityHome {
     }
 }
 
-impl GenmetaHome {
+impl DhttpHome {
     pub async fn locate_identity_exactly(&self, name: Name<'_>) -> io::Result<PathBuf> {
         let identity_io = self.join_identity_name(name);
         fs::metadata(identity_io.as_path())
@@ -363,7 +363,7 @@ mod default_config_integration {
 
     use super::LoadIdentityError;
     use crate::{
-        GenmetaHome,
+        DhttpHome,
         identity::{
             IdentityHome,
             default::{DefaultConfigFile, FileLineCol, LoadDefaultConfigError},
@@ -396,12 +396,12 @@ mod default_config_integration {
     impl DefaultConfigFile {
         pub async fn load_default_identity(
             &self,
-            genmeta_home: &GenmetaHome,
+            dhttp_home: &DhttpHome,
         ) -> Option<Result<IdentityHome, LoadDefaultIdentityFromConfigError>> {
             let name = self.config().name.as_ref()?;
 
             Some(
-                genmeta_home
+                dhttp_home
                     .load_identity(name.as_ref().borrow())
                     .await
                     .context(
@@ -413,7 +413,7 @@ mod default_config_integration {
         }
     }
 
-    impl GenmetaHome {
+    impl DhttpHome {
         pub async fn load_default_identity(
             &self,
         ) -> Result<IdentityHome, LoadDefaultIdentityError> {

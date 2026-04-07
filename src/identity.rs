@@ -7,7 +7,7 @@ use std::{
 
 use snafu::Snafu;
 
-use crate::GenmetaHome;
+use crate::DhttpHome;
 
 #[cfg(feature = "default-config")]
 pub mod default;
@@ -241,7 +241,7 @@ impl<'n> Name<'n> {
     }
 }
 
-/// An identity home directory (e.g. `.genmeta/reimu.pilot/`).
+/// An identity home directory (e.g. `.dhttp/reimu.pilot/`).
 #[derive(Debug, Clone)]
 pub struct IdentityHome {
     pub(crate) path: PathBuf,
@@ -262,7 +262,7 @@ impl IdentityHome {
     }
 }
 
-impl GenmetaHome {
+impl DhttpHome {
     pub fn join_identity_name(&self, name: Name<'_>) -> PathBuf {
         self.join(name.as_partial())
     }
