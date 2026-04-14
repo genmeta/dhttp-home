@@ -249,6 +249,12 @@ pub struct IdentityHome {
 }
 
 impl IdentityHome {
+    pub const LOGS_DIR: &'static str = "logs";
+    pub const ACCESS_LOG_FILE: &'static str = "access.log";
+    pub const DB_DIR: &'static str = "db";
+    pub const ACCESS_DB_FILE: &'static str = "access.db";
+    pub const SERVER_CONF_FILE: &'static str = "server.conf";
+
     pub fn name(&self) -> &Name<'static> {
         &self.name
     }
@@ -259,6 +265,22 @@ impl IdentityHome {
 
     pub fn join(&self, sub: impl AsRef<Path>) -> PathBuf {
         self.path.join(sub)
+    }
+
+    pub fn logs_dir(&self) -> PathBuf {
+        self.join(Self::LOGS_DIR)
+    }
+
+    pub fn access_log_path(&self) -> PathBuf {
+        self.logs_dir().join(Self::ACCESS_LOG_FILE)
+    }
+
+    pub fn access_db_path(&self) -> PathBuf {
+        self.join(Self::DB_DIR).join(Self::ACCESS_DB_FILE)
+    }
+
+    pub fn server_conf_path(&self) -> PathBuf {
+        self.join(Self::SERVER_CONF_FILE)
     }
 }
 
