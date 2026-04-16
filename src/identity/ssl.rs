@@ -22,7 +22,7 @@ pub const CERT_FILE_NAME: &str = "fullchain.crt";
 pub const KEY_FILE_NAME: &str = "privkey.pem";
 
 /// Loaded TLS material (certificates + private key) for an identity.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Identity {
     name: Name<'static>,
     certs: Vec<CertificateDer<'static>>,
